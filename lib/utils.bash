@@ -2,10 +2,9 @@
 
 set -euo pipefail
 
-# TODO: Ensure this is the correct GitHub homepage where releases can be downloaded for <YOUR TOOL>.
-GH_REPO="<TOOL REPO>"
-TOOL_NAME="<YOUR TOOL>"
-TOOL_TEST="<TOOL CHECK>"
+GH_REPO="https://github.com/cloudposse/atmos"
+TOOL_NAME="atmos"
+TOOL_TEST="atmos version"
 
 fail() {
 	echo -e "asdf-$TOOL_NAME: $*"
@@ -14,10 +13,23 @@ fail() {
 
 curl_opts=(-fsSL)
 
-# NOTE: You might want to remove this if <YOUR TOOL> is not hosted on GitHub releases.
+# Handle GitHub API token if available
 if [ -n "${GITHUB_API_TOKEN:-}" ]; then
 	curl_opts=("${curl_opts[@]}" -H "Authorization: token $GITHUB_API_TOKEN")
 fi
+
+# Function to detect OS and Architecture
+detect_platform() {
+	OS=$(uname | tr '[:upper:]' '[:lower:]')
+	ARCH=$(uname -m)
+
+	case $ARCH in
+	x86_64) ARCH="amd64" ;;
+	arm64) ARCH="arm64" ;;
+	aarch64) ARCH="arm64" ;;
+	*) fail "Architecture $ARCH is not supported." ;;
+	esac
+}
 
 sort_versions() {
 	sed 'h; s/[+-]/./g; s/.p\([[:digit:]]\)/.z\1/; s/$/.z/; G; s/\n/ /' |
@@ -27,12 +39,10 @@ sort_versions() {
 list_github_tags() {
 	git ls-remote --tags --refs "$GH_REPO" |
 		grep -o 'refs/tags/.*' | cut -d/ -f3- |
-		sed 's/^v//' # NOTE: You might want to adapt this sed to remove non-version strings from tags
+		sed 's/^v//' # Adapt this if the version format changes
 }
 
 list_all_versions() {
-	# TODO: Adapt this. By default we simply list the tag names from GitHub releases.
-	# Change this function if <YOUR TOOL> has other means of determining installable versions.
 	list_github_tags
 }
 
@@ -41,11 +51,13 @@ download_release() {
 	version="$1"
 	filename="$2"
 
-	# TODO: Adapt the release URL convention for <YOUR TOOL>
-	url="$GH_REPO/archive/v${version}.tar.gz"
+	detect_platform # Detect OS and ARCH
 
-	echo "* Downloading $TOOL_NAME release $version..."
-	curl "${curl_opts[@]}" -o "$filename" -C - "$url" || fail "Could not download $url"
+	# Construct the download URL based on version, OS, and architecture
+	url="$GH_REPO/releases/download/v${version}/${TOOL_NAME}_${version}_${OS}_${ARCH}"
+
+	echo "* Downloading $TOOL_NAME release $version for $OS/$ARCH..."
+	curl "${curl_opts[@]}" -o "$filename" -L "$url" || fail "Could not download $url"
 }
 
 install_version() {
@@ -59,9 +71,14 @@ install_version() {
 
 	(
 		mkdir -p "$install_path"
-		cp -r "$ASDF_DOWNLOAD_PATH"/* "$install_path"
+		filename="${TOOL_NAME}_${version}"
+		download_release "$version" "$filename"
+		mv "$filename" "$install_path/$TOOL_NAME"
 
-		# TODO: Assert <YOUR TOOL> executable exists.
+		# Make sure it's executable
+		chmod +x "$install_path/$TOOL_NAME"
+
+		# Verify the installation
 		local tool_cmd
 		tool_cmd="$(echo "$TOOL_TEST" | cut -d' ' -f1)"
 		test -x "$install_path/$tool_cmd" || fail "Expected $install_path/$tool_cmd to be executable."
